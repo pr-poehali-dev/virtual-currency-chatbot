@@ -13,14 +13,67 @@ interface Message {
   timestamp: Date;
 }
 
+interface UserData {
+  himCoins: number;
+  lastDailyBonus: string;
+}
+
+const DAILY_BONUS = 200;
+const STORAGE_KEY = 'himcoins_user_data';
+
 const Index = () => {
   const [messages, setMessages] = useState<Message[]>([
-    { id: '1', text: 'Привет! Я ИИ-помощник. За каждое сообщение тратится 1 токен. Как дела?', isBot: true, timestamp: new Date() }
+    { id: '1', text: 'Привет! Я ИИ-помощник. За каждое сообщение тратится 1 HimCoin. Как дела?', isBot: true, timestamp: new Date() }
   ]);
   const [inputValue, setInputValue] = useState('');
-  const [tokens, setTokens] = useState(100);
+  const [userData, setUserData] = useState<UserData>({ himCoins: 200, lastDailyBonus: '' });
   const [showChat, setShowChat] = useState(false);
+  const [canClaimDaily, setCanClaimDaily] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Загрузка данных из localStorage
+  useEffect(() => {
+    const savedData = localStorage.getItem(STORAGE_KEY);
+    if (savedData) {
+      const parsed: UserData = JSON.parse(savedData);
+      setUserData(parsed);
+      
+      // Проверяем, можно ли получить ежедневный бонус
+      const lastBonus = new Date(parsed.lastDailyBonus);
+      const now = new Date();
+      const timeDiff = now.getTime() - lastBonus.getTime();
+      const hoursDiff = timeDiff / (1000 * 3600);
+      
+      if (hoursDiff >= 24 || !parsed.lastDailyBonus) {
+        setCanClaimDaily(true);
+      }
+    } else {
+      // Первый запуск - даём стартовые монеты
+      const initialData: UserData = {
+        himCoins: 200,
+        lastDailyBonus: ''
+      };
+      setUserData(initialData);
+      setCanClaimDaily(true);
+    }
+  }, []);
+
+  // Сохранение данных в localStorage
+  const saveUserData = (data: UserData) => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    setUserData(data);
+  };
+
+  // Получение ежедневного бонуса
+  const claimDailyBonus = () => {
+    const now = new Date().toISOString();
+    const newUserData: UserData = {
+      himCoins: userData.himCoins + DAILY_BONUS,
+      lastDailyBonus: now
+    };
+    saveUserData(newUserData);
+    setCanClaimDaily(false);
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -29,7 +82,7 @@ const Index = () => {
   useEffect(scrollToBottom, [messages]);
 
   const handleSendMessage = () => {
-    if (!inputValue.trim() || tokens <= 0) return;
+    if (!inputValue.trim() || userData.himCoins <= 0) return;
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -40,9 +93,15 @@ const Index = () => {
 
     setMessages(prev => [...prev, userMessage]);
     setInputValue('');
-    setTokens(prev => prev - 1);
+    
+    // Тратим 1 HimCoin
+    const newUserData: UserData = {
+      ...userData,
+      himCoins: userData.himCoins - 1
+    };
+    saveUserData(newUserData);
 
-    // Симуляция ответа ботов
+    // Симуляция ответа бота
     setTimeout(() => {
       const botResponses = [
         'Отличный вопрос! Давайте это обсудим.',
@@ -95,7 +154,7 @@ const Index = () => {
             <div className="flex items-center gap-4">
               <Badge variant="secondary" className="px-3 py-1">
                 <Icon name="Coins" size={16} className="mr-1" />
-                {tokens} токенов
+                {userData.himCoins} HimCoins
               </Badge>
               <Button onClick={exportHistory} variant="outline" size="sm">
                 <Icon name="Download" size={16} className="mr-2" />
@@ -139,21 +198,21 @@ const Index = () => {
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 placeholder="Введите сообщение..."
-                disabled={tokens <= 0}
+                disabled={userData.himCoins <= 0}
                 onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
                 className="flex-1"
               />
               <Button 
                 onClick={handleSendMessage} 
-                disabled={!inputValue.trim() || tokens <= 0}
+                disabled={!inputValue.trim() || userData.himCoins <= 0}
                 className="px-6"
               >
                 <Icon name="Send" size={16} />
               </Button>
             </div>
-            {tokens <= 0 && (
+            {userData.himCoins <= 0 && (
               <p className="text-sm text-destructive mt-2">
-                Токены закончились! Пополните баланс для продолжения общения.
+                HimCoins закончились! Получите ежедневный бонус или пополните баланс.
               </p>
             )}
           </div>
@@ -179,7 +238,7 @@ const Index = () => {
           </h1>
           
           <p className="text-xl text-gray-600 mb-8 max-w-2xl mx-auto">
-            Платформа нового поколения для общения с ИИ. Используйте токены для доступа 
+            Платформа нового поколения для общения с ИИ. Используйте HimCoins для доступа 
             к продвинутым возможностям искусственного интеллекта.
           </p>
 
@@ -192,35 +251,43 @@ const Index = () => {
               <Icon name="MessageCircle" size={20} className="mr-2" />
               Начать общение
             </Button>
-            <Button variant="outline" size="lg" className="px-8 py-3 text-lg">
-              <Icon name="Play" size={20} className="mr-2" />
-              Посмотреть демо
-            </Button>
+
           </div>
 
-          {/* Token Balance Card */}
+          {/* HimCoins Balance Card */}
           <Card className="max-w-sm mx-auto bg-white/80 backdrop-blur-sm border-primary/20">
             <CardHeader>
               <div className="flex items-center justify-center gap-2 text-primary">
                 <Icon name="Coins" size={24} />
-                <span className="font-semibold">Баланс токенов</span>
+                <span className="font-semibold">Баланс HimCoins</span>
               </div>
             </CardHeader>
             <CardContent>
               <div className="text-center">
-                <div className="text-3xl font-bold text-gray-900 mb-2">{tokens}</div>
-                <p className="text-sm text-gray-600 mb-4">токенов доступно</p>
-                <Button variant="outline" size="sm">
-                  <Icon name="Plus" size={16} className="mr-2" />
-                  Пополнить баланс
-                </Button>
+                <div className="text-3xl font-bold text-gray-900 mb-2">{userData.himCoins}</div>
+                <p className="text-sm text-gray-600 mb-4">HimCoins доступно</p>
+                
+                {canClaimDaily ? (
+                  <Button 
+                    onClick={claimDailyBonus}
+                    className="mb-2"
+                  >
+                    <Icon name="Gift" size={16} className="mr-2" />
+                    Получить +{DAILY_BONUS} HimCoins
+                  </Button>
+                ) : (
+                  <Button variant="outline" size="sm" disabled>
+                    <Icon name="Clock" size={16} className="mr-2" />
+                    Ежедневный бонус получен
+                  </Button>
+                )}
               </div>
             </CardContent>
           </Card>
         </div>
 
         {/* Features Grid */}
-        <div className="grid md:grid-cols-3 gap-8 mb-16">
+        <div className="grid md:grid-cols-3 gap-8">
           <Card className="bg-white/60 backdrop-blur-sm border-0 shadow-lg hover:shadow-xl transition-shadow">
             <CardContent className="p-6 text-center">
               <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mx-auto mb-4">
@@ -250,33 +317,15 @@ const Index = () => {
               <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mx-auto mb-4">
                 <Icon name="Coins" size={24} className="text-primary" />
               </div>
-              <h3 className="text-xl font-semibold mb-2">Токен-система</h3>
+              <h3 className="text-xl font-semibold mb-2">HimCoins система</h3>
               <p className="text-gray-600">
-                Справедливая система оплаты за использование ИИ-возможностей
+                Получайте 200 HimCoins ежедневно и тратьте на общение с ИИ
               </p>
             </CardContent>
           </Card>
         </div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
-          <div>
-            <div className="text-3xl font-bold text-primary mb-2">10K+</div>
-            <div className="text-gray-600">Активных пользователей</div>
-          </div>
-          <div>
-            <div className="text-3xl font-bold text-primary mb-2">1M+</div>
-            <div className="text-gray-600">Сообщений обработано</div>
-          </div>
-          <div>
-            <div className="text-3xl font-bold text-primary mb-2">99.9%</div>
-            <div className="text-gray-600">Время работы</div>
-          </div>
-          <div>
-            <div className="text-3xl font-bold text-primary mb-2">24/7</div>
-            <div className="text-gray-600">Поддержка</div>
-          </div>
-        </div>
+
       </div>
     </div>
   );
