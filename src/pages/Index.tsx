@@ -23,7 +23,7 @@ const STORAGE_KEY = 'himcoins_user_data';
 
 const Index = () => {
   const [messages, setMessages] = useState<Message[]>([
-    { id: '1', text: 'Привет! Я ИИ-помощник. За каждое сообщение тратится 1 HimCoin. Как дела?', isBot: true, timestamp: new Date() }
+    { id: '1', text: 'Привет! Я Himo — умный ИИ-помощник. Могу решать математические задачи! Стоимость: 10 HimCoins за сообщение до 1000 символов.', isBot: true, timestamp: new Date() }
   ]);
   const [inputValue, setInputValue] = useState('');
   const [userData, setUserData] = useState<UserData>({ himCoins: 200, lastDailyBonus: '' });
@@ -81,8 +81,86 @@ const Index = () => {
 
   useEffect(scrollToBottom, [messages]);
 
+  // Функция для вычисления стоимости
+  const calculateCost = (text: string): number => {
+    const length = text.length;
+    return Math.ceil(length / 1000) * 10; // 10 HimCoins за каждые 1000 символов
+  };
+
+  // Умная функция ответов Himo
+  const getHimoResponse = (userText: string): string => {
+    const text = userText.toLowerCase();
+    
+    // Математические выражения
+    const mathPatterns = [
+      { pattern: /(\d+)\s*\+\s*(\d+)/, operation: (a: number, b: number) => a + b, symbol: '+' },
+      { pattern: /(\d+)\s*-\s*(\d+)/, operation: (a: number, b: number) => a - b, symbol: '-' },
+      { pattern: /(\d+)\s*\*\s*(\d+)/, operation: (a: number, b: number) => a * b, symbol: '*' },
+      { pattern: /(\d+)\s*\/\s*(\d+)/, operation: (a: number, b: number) => b !== 0 ? a / b : null, symbol: '/' },
+      { pattern: /(\d+)\s*\^\s*(\d+)/, operation: (a: number, b: number) => Math.pow(a, b), symbol: '^' }
+    ];
+
+    for (const { pattern, operation, symbol } of mathPatterns) {
+      const match = text.match(pattern);
+      if (match) {
+        const a = parseInt(match[1]);
+        const b = parseInt(match[2]);
+        const result = operation(a, b);
+        
+        if (result === null) {
+          return `Ошибка: Нельзя делить на ноль! 😅`;
+        }
+        
+        return `Вычисляю: ${a} ${symbol} ${b} = ${result} 🤖✨`;
+      }
+    }
+
+    // Квадратный корень
+    const sqrtMatch = text.match(/корень\s+(\d+)|sqrt\s*\(?\s*(\d+)\s*\)?/);
+    if (sqrtMatch) {
+      const num = parseInt(sqrtMatch[1] || sqrtMatch[2]);
+      const result = Math.sqrt(num);
+      return `Квадратный корень из ${num} = ${result.toFixed(2)} 🔢`;
+    }
+
+    // Проценты
+    const percentMatch = text.match(/(\d+)%\s*от\s*(\d+)|(колько|what)\s*(\d+)%\s*от\s*(\d+)/);
+    if (percentMatch) {
+      const percent = parseInt(percentMatch[1] || percentMatch[4]);
+      const number = parseInt(percentMatch[2] || percentMatch[5]);
+      const result = (number * percent) / 100;
+      return `${percent}% от ${number} = ${result} 📈`;
+    }
+
+    // Обычные ответы с проверкой ключевых слов
+    if (text.includes('математик') || text.includes('задач')) {
+      return 'Отлично! Я люблю математику! Напишите выражение вроде: "15 + 25" или "корень 16" 🧮';
+    }
+    
+    if (text.includes('как дела') || text.includes('привет')) {
+      return 'Привет! У меня все отлично! Готов помочь с математикой и любыми вопросами! 😊';
+    }
+
+    // Обычные ответы
+    const responses = [
+      'Интересный вопрос! Давайте разберем это вместе. 🤔',
+      'Хорошо! Расскажите побольше о том, что вас интересует. 😌',
+      'Я всегда готов помочь! Какой у вас вопрос? ✨',
+      'Отличная тема для обсуждения! Могу поделиться своими мыслями. 💡',
+      'Понял! Давайте рассмотрим это подробнее. 🔍'
+    ];
+    
+    return responses[Math.floor(Math.random() * responses.length)];
+  };
+
   const handleSendMessage = () => {
-    if (!inputValue.trim() || userData.himCoins <= 0) return;
+    if (!inputValue.trim()) return;
+    
+    const cost = calculateCost(inputValue);
+    if (userData.himCoins < cost) {
+      alert(`Недостаточно HimCoins! Нужно: ${cost}, у вас: ${userData.himCoins}`);
+      return;
+    }
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -92,34 +170,27 @@ const Index = () => {
     };
 
     setMessages(prev => [...prev, userMessage]);
+    const currentInput = inputValue;
     setInputValue('');
     
-    // Тратим 1 HimCoin
+    // Тратим HimCoins в зависимости от длины
     const newUserData: UserData = {
       ...userData,
-      himCoins: userData.himCoins - 1
+      himCoins: userData.himCoins - cost
     };
     saveUserData(newUserData);
 
-    // Симуляция ответа бота
+    // Ответ от Himo
     setTimeout(() => {
-      const botResponses = [
-        'Отличный вопрос! Давайте это обсудим.',
-        'Интересно, расскажи больше!',
-        'Я думаю, что это зависит от контекста.',
-        'У меня есть несколько идей по этому поводу.',
-        'Это действительно важная тема для размышлений.'
-      ];
-      
       const botMessage: Message = {
         id: (Date.now() + 1).toString(),
-        text: botResponses[Math.floor(Math.random() * botResponses.length)],
+        text: getHimoResponse(currentInput),
         isBot: true,
         timestamp: new Date()
       };
       
       setMessages(prev => [...prev, botMessage]);
-    }, 1000);
+    }, 1500);
   };
 
   const exportHistory = () => {
@@ -173,7 +244,7 @@ const Index = () => {
                 <div className={`flex items-start gap-3 max-w-xl ${message.isBot ? '' : 'flex-row-reverse'}`}>
                   <Avatar className="h-8 w-8 flex-shrink-0">
                     <AvatarFallback className={message.isBot ? 'bg-primary text-primary-foreground' : 'bg-gray-500'}>
-                      {message.isBot ? '🤖' : '👤'}
+                      {message.isBot ? '🟣' : '👤'}
                     </AvatarFallback>
                   </Avatar>
                   
@@ -197,24 +268,29 @@ const Index = () => {
               <Input
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
-                placeholder="Введите сообщение..."
-                disabled={userData.himCoins <= 0}
+                placeholder="Напишите сообщение или математическое выражение..."
+                disabled={userData.himCoins < 10}
                 onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
                 className="flex-1"
               />
               <Button 
                 onClick={handleSendMessage} 
-                disabled={!inputValue.trim() || userData.himCoins <= 0}
+                disabled={!inputValue.trim() || userData.himCoins < calculateCost(inputValue)}
                 className="px-6"
               >
                 <Icon name="Send" size={16} />
               </Button>
             </div>
-            {userData.himCoins <= 0 && (
-              <p className="text-sm text-destructive mt-2">
-                HimCoins закончились! Получите ежедневный бонус или пополните баланс.
-              </p>
-            )}
+            <div className="flex justify-between items-center mt-2">
+              <div className="text-xs text-gray-500">
+                Стоимость: {inputValue ? calculateCost(inputValue) : 10} HimCoins
+              </div>
+              {userData.himCoins < 10 && (
+                <p className="text-sm text-destructive">
+                  Недостаточно HimCoins!
+                </p>
+              )}
+            </div>
           </div>
         </div>
       </div>
