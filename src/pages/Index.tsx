@@ -5,7 +5,9 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import Icon from '@/components/ui/icon';
-import Auth, { UserProfile } from '@/components/Auth';
+import Auth, { UserProfile, Quest, Subscription } from '@/components/Auth';
+import QuestPanel from '@/components/QuestPanel';
+import SubscriptionStore from '@/components/SubscriptionStore';
 import { 
   saveMessageToDatabase,
   getUserMessagesFromDatabase,
@@ -36,6 +38,8 @@ const Index = () => {
   const [canClaimDaily, setCanClaimDaily] = useState(false);
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [showQuestPanel, setShowQuestPanel] = useState(false);
+  const [showSubscriptionStore, setShowSubscriptionStore] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Обработка успешного входа
@@ -90,6 +94,14 @@ const Index = () => {
       if (hoursDiff >= 24) {
         setCanClaimDaily(true);
       }
+      
+      // Проверяем и обновляем квесты
+      const updatedUser = await checkAndResetQuests(user);
+      const checkedUser = checkSubscriptionStatus(updatedUser);
+      
+      if (checkedUser !== user) {
+        await updateCurrentUser(checkedUser);
+      }
     } catch (error) {
       console.error('Ошибка загрузки данных пользователя:', error);
     }
@@ -122,6 +134,168 @@ const Index = () => {
         console.error('Ошибка обновления пользователя:', error);
       }
     }
+  };
+
+  // Обновление пользователя в базе
+  const updateCurrentUser = async (updatedUser: UserProfile) => {
+    try {
+      await updateUserInDatabase(updatedUser);
+      setCurrentUser(updatedUser);
+      
+      // Обновляем userData
+      setUserData({
+        himCoins: updatedUser.himCoins,
+        lastDailyBonus: updatedUser.lastLogin
+      });
+    } catch (error) {
+      console.error('Ошибка обновления пользователя:', error);
+    }
+  };
+
+  // Проверка и обновление квестов
+  const checkAndResetQuests = async (user: UserProfile): Promise<UserProfile> => {
+    const now = new Date();
+    const lastReset = new Date(user.lastQuestReset);
+    const timeDiff = now.getTime() - lastReset.getTime();
+    const hoursDiff = timeDiff / (1000 * 3600);
+    
+    if (hoursDiff >= 24) {
+      const newQuests = generateDailyQuests();
+      const updatedUser: UserProfile = {
+        ...user,
+        quests: newQuests,
+        lastQuestReset: now.toISOString()
+      };
+      
+      await updateCurrentUser(updatedUser);
+      return updatedUser;
+    }
+    
+    return user;
+  };
+
+  // Проверка подписки
+  const checkSubscriptionStatus = (user: UserProfile): UserProfile => {
+    if (user.subscription.active && user.subscription.endDate) {
+      const now = new Date();
+      const endDate = new Date(user.subscription.endDate);
+      
+      if (now > endDate) {
+        return {
+          ...user,
+          subscription: {
+            type: 'none',
+            active: false
+          }
+        };
+      }
+    }
+    
+    return user;
+  };
+
+  // Генерация ежедневных квестов
+  const generateDailyQuests = (): Quest[] => {
+    return [
+      {
+        id: 'quest1',
+        title: 'Активный собеседник',
+        description: 'Отправьте 5 сообщений боту',
+        target: 5,
+        progress: 0,
+        completed: false,
+        reward: { himCoins: 100, goldCoins: 1 }
+      },
+      {
+        id: 'quest2',
+        title: 'Любознательный',
+        description: 'Отправьте 15 сообщений боту',
+        target: 15,
+        progress: 0,
+        completed: false,
+        reward: { himCoins: 100, goldCoins: 1 }
+      },
+      {
+        id: 'quest3',
+        title: 'Болтун дня',
+        description: 'Отправьте 30 сообщений боту',
+        target: 30,
+        progress: 0,
+        completed: false,
+        reward: { himCoins: 100, goldCoins: 1 }
+      }
+    ];
+  };
+
+  // Обновление прогресса квестов
+  const updateQuestProgress = async () => {
+    if (!currentUser) return;
+    
+    const updatedQuests = currentUser.quests.map(quest => {
+      if (!quest.completed && quest.progress < quest.target) {
+        const newProgress = quest.progress + 1;
+        return {
+          ...quest,
+          progress: newProgress,
+          completed: newProgress >= quest.target
+        };
+      }
+      return quest;
+    });
+    
+    const updatedUser: UserProfile = {
+      ...currentUser,
+      quests: updatedQuests,
+      totalMessages: currentUser.totalMessages + 1
+    };
+    
+    await updateCurrentUser(updatedUser);
+  };
+
+  // Получение награды за квест
+  const claimQuestReward = async (questId: string) => {
+    if (!currentUser) return;
+    
+    const quest = currentUser.quests.find(q => q.id === questId);
+    if (!quest || !quest.completed) return;
+    
+    const updatedUser: UserProfile = {
+      ...currentUser,
+      himCoins: currentUser.himCoins + quest.reward.himCoins,
+      goldCoins: currentUser.goldCoins + quest.reward.goldCoins,
+      quests: currentUser.quests.filter(q => q.id !== questId)
+    };
+    
+    await updateCurrentUser(updatedUser);
+  };
+
+  // Покупка подписки
+  const purchaseSubscription = async (planId: 'none' | '3days' | '1week' | '1month') => {
+    if (!currentUser || planId === 'none') return;
+    
+    const prices = { '3days': 10, '1week': 30, '1month': 100 };
+    const durations = { '3days': 3, '1week': 7, '1month': 30 };
+    
+    const price = prices[planId];
+    if (currentUser.goldCoins < price) return;
+    
+    const startDate = new Date();
+    const endDate = new Date();
+    endDate.setDate(startDate.getDate() + durations[planId]);
+    
+    const updatedUser: UserProfile = {
+      ...currentUser,
+      goldCoins: currentUser.goldCoins - price,
+      subscription: {
+        type: planId,
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+        active: true
+      }
+    };
+    
+    await updateCurrentUser(updatedUser);
+    setShowSubscriptionStore(false);
   };
 
   // Получение ежедневного бонуса
@@ -217,7 +391,9 @@ const Index = () => {
     if (!inputValue.trim() || !currentUser) return;
     
     const cost = calculateCost(inputValue);
-    if (userData.himCoins < cost) {
+    const hasPremium = currentUser.subscription.active;
+    
+    if (!hasPremium && userData.himCoins < cost) {
       alert(`Недостаточно HimCoins! Нужно: ${cost}, у вас: ${userData.himCoins}`);
       return;
     }
@@ -247,12 +423,17 @@ const Index = () => {
       console.error('Ошибка сохранения сообщения:', error);
     }
     
-    // Тратим HimCoins в зависимости от длины
-    const newUserData: UserData = {
-      ...userData,
-      himCoins: userData.himCoins - cost
-    };
-    await saveUserData(newUserData);
+    // Обновляем прогресс квестов
+    await updateQuestProgress();
+    
+    // Тратим HimCoins только если нет подписки
+    if (!hasPremium) {
+      const newUserData: UserData = {
+        ...userData,
+        himCoins: userData.himCoins - cost
+      };
+      await saveUserData(newUserData);
+    }
 
     // Ответ от Himo
     setTimeout(async () => {
@@ -319,10 +500,42 @@ const Index = () => {
             </div>
             
             <div className="flex items-center gap-4">
-              <Badge variant="secondary" className="px-3 py-1">
-                <Icon name="Coins" size={16} className="mr-1" />
-                {userData.himCoins} HimCoins
-              </Badge>
+              <div className="flex items-center gap-2">
+                <Badge variant="secondary" className="px-3 py-1">
+                  <Icon name="Coins" size={16} className="mr-1" />
+                  {userData.himCoins} HimCoins
+                </Badge>
+                <Badge variant="outline" className="px-3 py-1 border-amber-200">
+                  <Icon name="Star" size={16} className="mr-1 text-amber-600" />
+                  <span className="text-amber-800">{currentUser?.goldCoins || 0} GoldCoins</span>
+                </Badge>
+                {currentUser?.subscription.active && (
+                  <Badge className="px-3 py-1 bg-gradient-to-r from-amber-500 to-orange-600">
+                    <Icon name="Crown" size={14} className="mr-1" />
+                    Him+
+                  </Badge>
+                )}
+              </div>
+              <Button 
+                onClick={() => setShowQuestPanel(true)} 
+                variant="outline" 
+                size="sm"
+                className="relative"
+              >
+                <Icon name="Target" size={16} className="mr-2" />
+                Квесты
+                {currentUser?.quests.some(q => q.completed) && (
+                  <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-pulse" />
+                )}
+              </Button>
+              <Button 
+                onClick={() => setShowSubscriptionStore(true)} 
+                variant="outline" 
+                size="sm"
+              >
+                <Icon name="Crown" size={16} className="mr-2" />
+                Him+
+              </Button>
               <Button onClick={exportHistory} variant="outline" size="sm">
                 <Icon name="Download" size={16} className="mr-2" />
                 Экспорт
@@ -367,7 +580,7 @@ const Index = () => {
             <div className="flex gap-2">
               <Button 
                 onClick={handleSendMessage} 
-                disabled={!inputValue.trim() || userData.himCoins < calculateCost(inputValue) || !currentUser}
+                disabled={!inputValue.trim() || (!currentUser?.subscription.active && userData.himCoins < calculateCost(inputValue)) || !currentUser}
                 className="px-6"
               >
                 <Icon name="Send" size={16} />
@@ -376,14 +589,21 @@ const Index = () => {
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 placeholder="Напишите сообщение или математическое выражение..."
-                disabled={userData.himCoins < 10 || !currentUser}
+                disabled={(!currentUser?.subscription.active && userData.himCoins < 10) || !currentUser}
                 onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
                 className="flex-1"
               />
             </div>
             <div className="flex justify-between items-center mt-2">
               <div className="text-xs text-gray-500">
-                Стоимость: {inputValue ? calculateCost(inputValue) : 10} HimCoins
+                {currentUser?.subscription.active ? (
+                  <span className="text-green-600 flex items-center gap-1">
+                    <Icon name="Crown" size={12} />
+                    Him+ активна - бесплатно
+                  </span>
+                ) : (
+                  <span>Стоимость: {inputValue ? calculateCost(inputValue) : 10} HimCoins</span>
+                )}
               </div>
               {userData.himCoins < 10 && (
                 <p className="text-sm text-destructive">
@@ -393,6 +613,36 @@ const Index = () => {
             </div>
           </div>
         </div>
+        
+        {/* Quest Panel Modal */}
+        {showQuestPanel && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
+              <div className="flex items-center justify-between p-4 border-b">
+                <h3 className="font-semibold">Ежедневные квесты</h3>
+                <Button variant="ghost" onClick={() => setShowQuestPanel(false)} size="sm">
+                  <Icon name="X" size={16} />
+                </Button>
+              </div>
+              <div className="p-4">
+                <QuestPanel 
+                  quests={currentUser?.quests || []} 
+                  onClaimReward={claimQuestReward}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {/* Subscription Store Modal */}
+        {showSubscriptionStore && (
+          <SubscriptionStore
+            currentSubscription={currentUser?.subscription || { type: 'none', active: false }}
+            goldCoins={currentUser?.goldCoins || 0}
+            onPurchase={purchaseSubscription}
+            onClose={() => setShowSubscriptionStore(false)}
+          />
+        )}
       </div>
     );
   }
@@ -456,8 +706,16 @@ const Index = () => {
               </CardHeader>
               <CardContent>
                 <div className="text-center">
-                  <div className="text-3xl font-bold text-gray-900 mb-2">{userData.himCoins}</div>
-                  <p className="text-sm text-gray-600 mb-4">HimCoins доступно</p>
+                  <div className="flex items-center justify-center gap-4 mb-4">
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-gray-900">{userData.himCoins}</div>
+                      <p className="text-xs text-gray-600">HimCoins</p>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-amber-600">{currentUser?.goldCoins || 0}</div>
+                      <p className="text-xs text-gray-600">GoldCoins</p>
+                    </div>
+                  </div>
                   
                   {canClaimDaily ? (
                     <Button 

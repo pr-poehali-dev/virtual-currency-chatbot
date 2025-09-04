@@ -15,14 +15,38 @@ interface AuthProps {
   onLogin: (userData: UserProfile) => void;
 }
 
+export interface Quest {
+  id: string;
+  title: string;
+  description: string;
+  target: number;
+  progress: number;
+  completed: boolean;
+  reward: {
+    himCoins: number;
+    goldCoins: number;
+  };
+}
+
+export interface Subscription {
+  type: 'none' | '3days' | '1week' | '1month';
+  startDate?: string;
+  endDate?: string;
+  active: boolean;
+}
+
 interface UserProfile {
   id: string;
   username: string;
   email: string;
   himCoins: number;
+  goldCoins: number;
   registrationDate: string;
   lastLogin: string;
   totalMessages: number;
+  quests: Quest[];
+  lastQuestReset: string;
+  subscription: Subscription;
 }
 
 const Auth: React.FC<AuthProps> = ({ onLogin }) => {
@@ -94,14 +118,23 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
         if (existingUser) {
           setErrors({ username: 'Пользователь уже существует' });
         } else {
+          const initialQuests: Quest[] = generateDailyQuests();
+          
           const newUser: UserProfile = {
             id: crypto.randomUUID(),
             username: formData.username,
             email: formData.email,
             himCoins: 500, // Стартовый бонус для новых пользователей
+            goldCoins: 0, // Начинаем с 0 золотых монет
             registrationDate: new Date().toISOString(),
             lastLogin: new Date().toISOString(),
-            totalMessages: 0
+            totalMessages: 0,
+            quests: initialQuests,
+            lastQuestReset: new Date().toISOString(),
+            subscription: {
+              type: 'none',
+              active: false
+            }
           };
           await saveUserToDB(newUser);
           onLogin(newUser);
@@ -316,6 +349,48 @@ const updateUserInDB = async (user: UserProfile): Promise<void> => {
     console.error('Ошибка при обновлении пользователя:', error);
     throw error;
   }
+};
+
+// Функция для генерации ежедневных квестов
+const generateDailyQuests = (): Quest[] => {
+  return [
+    {
+      id: 'quest1',
+      title: 'Активный собеседник',
+      description: 'Отправьте 5 сообщений боту',
+      target: 5,
+      progress: 0,
+      completed: false,
+      reward: {
+        himCoins: 100,
+        goldCoins: 1
+      }
+    },
+    {
+      id: 'quest2', 
+      title: 'Любознательный',
+      description: 'Отправьте 15 сообщений боту',
+      target: 15,
+      progress: 0,
+      completed: false,
+      reward: {
+        himCoins: 100,
+        goldCoins: 1
+      }
+    },
+    {
+      id: 'quest3',
+      title: 'Болтун дня',
+      description: 'Отправьте 30 сообщений боту',
+      target: 30,
+      progress: 0,
+      completed: false,
+      reward: {
+        himCoins: 100,
+        goldCoins: 1
+      }
+    }
+  ];
 };
 
 export default Auth;
