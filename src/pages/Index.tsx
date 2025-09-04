@@ -5,6 +5,13 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import Icon from '@/components/ui/icon';
+import Auth, { UserProfile } from '@/components/Auth';
+import { 
+  saveMessageToDatabase,
+  getUserMessagesFromDatabase,
+  updateUserInDatabase,
+  StoredMessage 
+} from '@/utils/database';
 
 interface Message {
   id: string;
@@ -22,56 +29,109 @@ const DAILY_BONUS = 200;
 const STORAGE_KEY = 'himcoins_user_data';
 
 const Index = () => {
-  const [messages, setMessages] = useState<Message[]>([
-    { id: '1', text: 'Привет! Я Himo — умный ИИ-помощник. Могу решать математические задачи! Стоимость: 10 HimCoins за сообщение до 1000 символов.', isBot: true, timestamp: new Date() }
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [userData, setUserData] = useState<UserData>({ himCoins: 200, lastDailyBonus: '' });
   const [showChat, setShowChat] = useState(false);
   const [canClaimDaily, setCanClaimDaily] = useState(false);
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Загрузка данных из localStorage
-  useEffect(() => {
-    const savedData = localStorage.getItem(STORAGE_KEY);
-    if (savedData) {
-      const parsed: UserData = JSON.parse(savedData);
-      setUserData(parsed);
+  // Обработка успешного входа
+  const handleLogin = async (user: UserProfile) => {
+    setCurrentUser(user);
+    setIsAuthenticated(true);
+    
+    // Загружаем сообщения пользователя
+    try {
+      const storedMessages = await getUserMessagesFromDatabase(user.id);
+      const messages: Message[] = storedMessages.map(msg => ({
+        id: msg.id,
+        text: msg.text,
+        isBot: msg.isBot,
+        timestamp: new Date(msg.timestamp)
+      }));
       
-      // Проверяем, можно ли получить ежедневный бонус
-      const lastBonus = new Date(parsed.lastDailyBonus);
+      // Добавляем приветственное сообщение если нет истории
+      if (messages.length === 0) {
+        const welcomeMessage: Message = {
+          id: '1',
+          text: `Привет, ${user.username}! Я Himo — умный ИИ-помощник. Могу решать математические задачи! Стоимость: 10 HimCoins за сообщение до 1000 символов.`,
+          isBot: true,
+          timestamp: new Date()
+        };
+        setMessages([welcomeMessage]);
+        
+        // Сохраняем приветственное сообщение
+        await saveMessageToDatabase({
+          id: welcomeMessage.id,
+          userId: user.id,
+          text: welcomeMessage.text,
+          isBot: welcomeMessage.isBot,
+          timestamp: welcomeMessage.timestamp.toISOString()
+        });
+      } else {
+        setMessages(messages);
+      }
+      
+      // Устанавливаем userData на основе профиля пользователя
+      setUserData({
+        himCoins: user.himCoins,
+        lastDailyBonus: user.lastLogin
+      });
+      
+      // Проверяем ежедневный бонус
+      const lastLogin = new Date(user.lastLogin);
       const now = new Date();
-      const timeDiff = now.getTime() - lastBonus.getTime();
+      const timeDiff = now.getTime() - lastLogin.getTime();
       const hoursDiff = timeDiff / (1000 * 3600);
       
-      if (hoursDiff >= 24 || !parsed.lastDailyBonus) {
+      if (hoursDiff >= 24) {
         setCanClaimDaily(true);
       }
-    } else {
-      // Первый запуск - даём стартовые монеты
-      const initialData: UserData = {
-        himCoins: 200,
-        lastDailyBonus: ''
-      };
-      setUserData(initialData);
-      setCanClaimDaily(true);
+    } catch (error) {
+      console.error('Ошибка загрузки данных пользователя:', error);
     }
-  }, []);
+  };
 
-  // Сохранение данных в localStorage
-  const saveUserData = (data: UserData) => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  // Выход из аккаунта
+  const handleLogout = () => {
+    setCurrentUser(null);
+    setIsAuthenticated(false);
+    setMessages([]);
+    setShowChat(false);
+    setUserData({ himCoins: 0, lastDailyBonus: '' });
+  };
+
+  // Сохранение данных пользователя
+  const saveUserData = async (data: UserData) => {
     setUserData(data);
+    
+    if (currentUser) {
+      const updatedUser: UserProfile = {
+        ...currentUser,
+        himCoins: data.himCoins,
+        lastLogin: new Date().toISOString()
+      };
+      
+      try {
+        await updateUserInDatabase(updatedUser);
+        setCurrentUser(updatedUser);
+      } catch (error) {
+        console.error('Ошибка обновления пользователя:', error);
+      }
+    }
   };
 
   // Получение ежедневного бонуса
-  const claimDailyBonus = () => {
+  const claimDailyBonus = async () => {
     const now = new Date().toISOString();
     const newUserData: UserData = {
       himCoins: userData.himCoins + DAILY_BONUS,
       lastDailyBonus: now
     };
-    saveUserData(newUserData);
+    await saveUserData(newUserData);
     setCanClaimDaily(false);
   };
 
@@ -153,8 +213,8 @@ const Index = () => {
     return responses[Math.floor(Math.random() * responses.length)];
   };
 
-  const handleSendMessage = () => {
-    if (!inputValue.trim()) return;
+  const handleSendMessage = async () => {
+    if (!inputValue.trim() || !currentUser) return;
     
     const cost = calculateCost(inputValue);
     if (userData.himCoins < cost) {
@@ -173,15 +233,29 @@ const Index = () => {
     const currentInput = inputValue;
     setInputValue('');
     
+    // Сохраняем сообщение пользователя в базу
+    try {
+      await saveMessageToDatabase({
+        id: userMessage.id,
+        userId: currentUser.id,
+        text: userMessage.text,
+        isBot: userMessage.isBot,
+        timestamp: userMessage.timestamp.toISOString(),
+        cost
+      });
+    } catch (error) {
+      console.error('Ошибка сохранения сообщения:', error);
+    }
+    
     // Тратим HimCoins в зависимости от длины
     const newUserData: UserData = {
       ...userData,
       himCoins: userData.himCoins - cost
     };
-    saveUserData(newUserData);
+    await saveUserData(newUserData);
 
     // Ответ от Himo
-    setTimeout(() => {
+    setTimeout(async () => {
       const botMessage: Message = {
         id: (Date.now() + 1).toString(),
         text: getHimoResponse(currentInput),
@@ -190,6 +264,19 @@ const Index = () => {
       };
       
       setMessages(prev => [...prev, botMessage]);
+      
+      // Сохраняем ответ бота в базу
+      try {
+        await saveMessageToDatabase({
+          id: botMessage.id,
+          userId: currentUser.id,
+          text: botMessage.text,
+          isBot: botMessage.isBot,
+          timestamp: botMessage.timestamp.toISOString()
+        });
+      } catch (error) {
+        console.error('Ошибка сохранения ответа бота:', error);
+      }
     }, 1500);
   };
 
@@ -207,6 +294,11 @@ const Index = () => {
     URL.revokeObjectURL(url);
   };
 
+  // Если пользователь не авторизован, показываем форму входа
+  if (!isAuthenticated) {
+    return <Auth onLogin={handleLogin} />;
+  }
+
   if (showChat) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
@@ -222,6 +314,10 @@ const Index = () => {
               Назад
             </Button>
             
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-600">@{currentUser?.username}</span>
+            </div>
+            
             <div className="flex items-center gap-4">
               <Badge variant="secondary" className="px-3 py-1">
                 <Icon name="Coins" size={16} className="mr-1" />
@@ -230,6 +326,10 @@ const Index = () => {
               <Button onClick={exportHistory} variant="outline" size="sm">
                 <Icon name="Download" size={16} className="mr-2" />
                 Экспорт
+              </Button>
+              <Button onClick={handleLogout} variant="outline" size="sm">
+                <Icon name="LogOut" size={16} className="mr-2" />
+                Выйти
               </Button>
             </div>
           </div>
@@ -265,21 +365,21 @@ const Index = () => {
           {/* Message Input */}
           <div className="p-4 border-t bg-white/80 backdrop-blur-sm">
             <div className="flex gap-2">
-              <Input
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                placeholder="Напишите сообщение или математическое выражение..."
-                disabled={userData.himCoins < 10}
-                onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                className="flex-1"
-              />
               <Button 
                 onClick={handleSendMessage} 
-                disabled={!inputValue.trim() || userData.himCoins < calculateCost(inputValue)}
+                disabled={!inputValue.trim() || userData.himCoins < calculateCost(inputValue) || !currentUser}
                 className="px-6"
               >
                 <Icon name="Send" size={16} />
               </Button>
+              <Input
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                placeholder="Напишите сообщение или математическое выражение..."
+                disabled={userData.himCoins < 10 || !currentUser}
+                onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+                className="flex-1"
+              />
             </div>
             <div className="flex justify-between items-center mt-2">
               <div className="text-xs text-gray-500">
@@ -319,47 +419,64 @@ const Index = () => {
           </p>
 
           <div className="flex items-center justify-center gap-4 mb-12">
-            <Button 
-              onClick={() => setShowChat(true)}
-              size="lg" 
-              className="px-8 py-3 text-lg font-medium"
-            >
-              <Icon name="MessageCircle" size={20} className="mr-2" />
-              Начать общение
-            </Button>
-
+            {isAuthenticated ? (
+              <Button 
+                onClick={() => setShowChat(true)}
+                size="lg" 
+                className="px-8 py-3 text-lg font-medium"
+              >
+                <Icon name="MessageCircle" size={20} className="mr-2" />
+                Начать общение
+              </Button>
+            ) : (
+              <div className="text-center">
+                <p className="text-gray-600 mb-4">
+                  Войдите или зарегистрируйтесь для начала общения с Himo
+                </p>
+                <Button 
+                  size="lg" 
+                  className="px-8 py-3 text-lg font-medium"
+                  disabled
+                >
+                  <Icon name="Lock" size={20} className="mr-2" />
+                  Требуется авторизация
+                </Button>
+              </div>
+            )}
           </div>
 
           {/* HimCoins Balance Card */}
-          <Card className="max-w-sm mx-auto bg-white/80 backdrop-blur-sm border-primary/20">
-            <CardHeader>
-              <div className="flex items-center justify-center gap-2 text-primary">
-                <Icon name="Coins" size={24} />
-                <span className="font-semibold">Баланс HimCoins</span>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-center">
-                <div className="text-3xl font-bold text-gray-900 mb-2">{userData.himCoins}</div>
-                <p className="text-sm text-gray-600 mb-4">HimCoins доступно</p>
-                
-                {canClaimDaily ? (
-                  <Button 
-                    onClick={claimDailyBonus}
-                    className="mb-2"
-                  >
-                    <Icon name="Gift" size={16} className="mr-2" />
-                    Получить +{DAILY_BONUS} HimCoins
-                  </Button>
-                ) : (
-                  <Button variant="outline" size="sm" disabled>
-                    <Icon name="Clock" size={16} className="mr-2" />
-                    Ежедневный бонус получен
-                  </Button>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+          {isAuthenticated && (
+            <Card className="max-w-sm mx-auto bg-white/80 backdrop-blur-sm border-primary/20">
+              <CardHeader>
+                <div className="flex items-center justify-center gap-2 text-primary">
+                  <Icon name="Coins" size={24} />
+                  <span className="font-semibold">Баланс HimCoins</span>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-center">
+                  <div className="text-3xl font-bold text-gray-900 mb-2">{userData.himCoins}</div>
+                  <p className="text-sm text-gray-600 mb-4">HimCoins доступно</p>
+                  
+                  {canClaimDaily ? (
+                    <Button 
+                      onClick={claimDailyBonus}
+                      className="mb-2"
+                    >
+                      <Icon name="Gift" size={16} className="mr-2" />
+                      Получить +{DAILY_BONUS} HimCoins
+                    </Button>
+                  ) : (
+                    <Button variant="outline" size="sm" disabled>
+                      <Icon name="Clock" size={16} className="mr-2" />
+                      Ежедневный бонус получен
+                    </Button>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         {/* Features Grid */}
